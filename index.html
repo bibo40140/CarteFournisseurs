@@ -286,15 +286,41 @@
       });
       document.getElementById('counter').textContent = cnt+' producteurs visibles';
 
-      // Réafficher épiceries décochées si besoin
-      epicerieLayer.clearLayers();
-      allEpiceries.forEach(e => {
-        if (!sel('epicerieCheckboxes').includes(e.nom)) return;
-        const lat = parseFloat(e.latitude), lng = parseFloat(e.longitude);
-        if (isNaN(lat)||isNaN(lng)) return;
-        const div = makeDivIcon(e['url icone'],'#FF8C00',60,50);
-        L.marker([lat,lng],{icon:div}).addTo(epicerieLayer);
-      });
+// Réafficher épiceries décochées si besoin
+epicerieLayer.clearLayers();
+allEpiceries.forEach(e => {
+  if (!sel('epicerieCheckboxes').includes(e.nom)) return;
+  const lat = parseFloat(e.latitude), lng = parseFloat(e.longitude);
+  if (isNaN(lat) || isNaN(lng)) return;
+  const div = makeDivIcon(e['url icone'], '#FF8C00', 60, 50);
+
+  // Construction du HTML de la popup avec jours et heures
+  const popupHtml = `
+    <strong>${e.nom}</strong><br/>
+    ${e.adresse || ''} ${e['code postal'] || ''} ${e.ville || ''}<br/>
+    <hr style="margin:4px 0; border:none; border-top:1px solid #ccc;">
+    <strong>Tél :</strong> ${e.telephone || 'N/A'}<br/>
+    <strong>Mail :</strong>
+      ${e.mail
+        ? `<a href="mailto:${e.mail}" style="color:#007bff;text-decoration:none">${e.mail}</a>`
+        : 'N/A'}<br/>
+    <strong>Horaires :</strong><br/>
+    Lun : ${e.lundi || '—'}<br/>
+    Mar : ${e.mardi || '—'}<br/>
+    Mer : ${e.mercredi || '—'}<br/>
+    Jeu : ${e.jeudi || '—'}<br/>
+    Ven : ${e.vendredi || '—'}<br/>
+    Sam : ${e.samedi || '—'}<br/>
+    Dim : ${e.dimanche || '—'}
+  `;
+
+  // Création et ajout du marqueur
+  L.marker([lat, lng], { icon: div, title: e.nom })
+    .bindPopup(popupHtml)
+    .addTo(epicerieLayer);
+});
+
+
     }
 
     // 11) Chargement automatique du XLSX
