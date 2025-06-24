@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Carte OSM Fournisseurs & Épiceries</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css"/>
+  <style>
+body{margin:0;font-family:Segoe UI,sans-serif;display:flex;height:100vh}
+    #sidebar{width:320px;padding:15px;background:#fff;border-right:1px solid #ddd;overflow-y:auto}
+    #map{flex:1}
+        .accordion-section{border-bottom:1px solid #eee}
+    .accordion-toggle{width:100%;background:none;border:none;font-weight:bold;text-align:left;padding:10px 0;cursor:pointer}
+    .accordion-content{max-height:0;overflow:hidden;transition:max-height .3s ease}
+    .accordion-section.active .accordion-content{max-height:400px}
+    .small-btn{background:#007bff;color:#fff;padding:6px 8px;border:none;border-radius:4px;cursor:pointer;margin:5px 0}
+    .label-checkbox-list label{display:flex;align-items:center;margin:5px}
+    .label-checkbox-list label img{width:20px;height:20px;margin-right:6px}
+    .label-color-swatch{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:6px;border:1px solid #aaa}
+    .epicerie-logos{margin-top:6px;display:flex;flex-wrap:wrap}
+    .epicerie-logos img{width:48px;height:48px;margin:2px;vertical-align:middle;border-radius:4px;border:1px solid #ccc}
+    input[type=file]{margin-bottom:10px}
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <input type="file" id="fileInput" accept=".xlsx"/>
+    <div class="accordion-section">
+      <button class="accordion-toggle">🔍 Rechercher</button>
+      <div class="accordion-content">
+        <input type="text" id="search" placeholder="Nom du producteur"/>
+      </div>
+    </div>
+    <div class="accordion-section">
+      <button class="accordion-toggle">🛒 Épiceries</button>
+      <div class="accordion-content">
+        <div id="epicerieCheckboxes" class="label-checkbox-list"></div>
+        <button id="toggleAllEpiceries" class="small-btn">Tout décocher</button>
+      </div>
+    </div>
+    <div class="accordion-section">
+      <button class="accordion-toggle">🥕 Activités</button>
+      <div class="accordion-content">
+        <div id="activiteCheckboxes" class="label-checkbox-list"></div>
+        <button id="toggleAllActivites" class="small-btn">Tout décocher</button>
+      </div>
+    </div>
+    <div class="accordion-section">
+      <button class="accordion-toggle">🏷️ Type</button>
+      <div class="accordion-content">
+        <div id="typeCheckboxes" class="label-checkbox-list"></div>
+        <button id="toggleAllTypes" class="small-btn">Tout décocher</button>
+      </div>
+    </div>
+    <div class="accordion-section">
+      <button class="accordion-toggle">📍 Distance max</button>
+      <div class="accordion-content">
+        <input type="range" id="distanceFilter" min="0" max="1000" step="10" value="1000"/>
+        <div id="distanceValue">1000 km</div>
+      </div>
+    </div>
+    <div class="accordion-section">
+      <button class="accordion-toggle">🏅 Labels</button>
+      <div class="accordion-content">
+        <div id="labelCheckboxes" class="label-checkbox-list"></div>
+        <button id="toggleAllLabels" class="small-btn">Tout décocher</button>
+      </div>
+    </div>
+    <div id="counter" style="margin-top:10px;font-weight:bold">0 producteurs visibles</div>
+  </div>
+  <div id="map"></div>
+
+ <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+  <script>
+    let map, markerCluster, epicerieLayer, centralPoint, distanceCircle;
+    let allData = [], allGroups = [], allEpiceries = [];
+    const geocodeCache = {};
+    const centralAddress = '6 rue des molinies, 40140 Azur';
+
+    function initMap() {
+      map = L.map('map').setView([43.7, -1.3], 8);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OSM'}).addTo(map);
+      markerCluster = L.markerClusterGroup(); map.addLayer(markerCluster);
+      epicerieLayer   = L.layerGroup().addTo(map);
+      geocode(centralAddress).then(pt=>centralPoint=pt);
+    }
+
+    function geocode(addr) {
+      if (geocodeCache[addr]) return Promise.resolve(geocodeCache[addr]);
+      return fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}`
+      ).then(r=>r.json())
+       .then(data=>{
+         const p = data[0] ? L.latLng(data[0].lat,data[0].lon) : null;
+         geocodeCache[addr] = p;
+         return p;
+       }).catch(()=>null);
+    }
+    function drawDistanceCircle(km) {
+      if (distanceCircle) {
+        map.removeLayer(distanceCircle);
+      }
+      if (!centralPoint) return;
+      distanceCircle = L.circle(centralPoint, {
+        radius: km * 1000,
+        color: '#4285F4',
+        fillOpacity: 0.1
+      }).addTo(map);
+    }
+    function makeDivIcon(iconUrl,borderColor,size=40,imgSize=28){
+      return L.divIcon({
+        className:'', iconSize:[size,size], iconAnchor:[size/2,size/2],
+        html:`
+          <div style="position:relative;width:${size}px;height:${size}px;">
+            <div style="
+              position:absolute;top:0;left:0;
+              width:${size}px;height:${size}px;
+              border:3px solid ${borderColor};
+              border-radius:50%;background:#fff;"></div>
+            <img src="${iconUrl}" style="
+              position:absolute;
+              top:${(size-imgSize)/2}px; left:${(size-imgSize)/2}px;
+              width:${imgSize}px; height:${imgSize}px;
+              border-radius:50%;"/>
+          </div>`
+      });
+    }
+
+    document.getElementById('fileInput').addEventListener('change', ev=>{
+      const reader = new FileReader();
+      reader.onload = e => {
+        const wb = XLSX.read(e.target.result,{type:'array'});
+        // 1) Lecture Épiceries AVANT tout
+        const wsE = wb.Sheets['Epicerie'];
+        if (wsE) {
+          allEpiceries = XLSX.utils.sheet_to_json(wsE,{defval:''})
+            .map(r=>Object.fromEntries(Object.entries(r).map(([k,v])=>
+              [k.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''),v]
+          )));
+        }
+        // 2) Lecture Producteurs
+        const ws0 = wb.Sheets[wb.SheetNames[0]];
+        allData = XLSX.utils.sheet_to_json(ws0,{defval:''})
+          .map(r=>Object.fromEntries(Object.entries(r).map(([k,v])=>
+            [k.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''),v]
+        )));
+        // 3) Lecture Icônes/Couleurs
+        const ds = wb.Sheets['Data']||wb.Sheets['data']||wb.Sheets['Icones'];
+        const iconMap={}, labelColorMap={};
+        if (ds) XLSX.utils.sheet_to_json(ds,{defval:''}).forEach(raw=>{
+          const row = Object.fromEntries(Object.entries(raw).map(([k,v])=>
+            [k.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,''),v]
+          ));
+          if (row.activite && row['url icone']) iconMap[row.activite] = row['url icone'];
+          if (row.label    && row.labelcolor ) labelColorMap[row.label]   = row.labelcolor;
+        });
+        // 4) Construire menu Épiceries puis filtrage
+        buildEpicerieMenu();
+        // 5) Ajouter producteurs (utilise allEpiceries pour les logos)
+        processData(iconMap, labelColorMap);
+        applyFilters();
+      };
+      reader.readAsArrayBuffer(ev.target.files[0]);
+    });
+
+  function buildEpicerieMenu(){
+      const c = document.getElementById('epicerieCheckboxes');
+      c.innerHTML = '';
+      allEpiceries.forEach(e=>{
+        const lbl = document.createElement('label');
+        const img = document.createElement('img');
+        img.src = e['url icone'];
+        img.style.width='20px'; img.style.height='20px'; img.style.marginRight='6px';
+        const cb = document.createElement('input');
+        cb.type='checkbox'; cb.value=e.nom; cb.checked=true;
+        cb.onchange = applyFilters;
+        lbl.append(img, cb, document.createTextNode(' '+e.nom));
+        c.append(lbl);
+      });
+      document.getElementById('toggleAllEpiceries').onclick = ()=>toggleGroup('epicerieCheckboxes','toggleAllEpiceries');
+    }
+
+    function processData(iconMap, labelColorMap) {
+      markerCluster.clearLayers(); allGroups = [];
+      allData.forEach(item=>{
+        if (!item.latitude||!item.longitude) return;
+        const pt = L.latLng(item.latitude,item.longitude);
+        const div = makeDivIcon(iconMap[item.activite]||'',labelColorMap[item.label]||'#000');
+
+        // logos épiceries
+        const clients = (item.client||'').split(',').map(s=>s.trim());
+        let logosHTML = '<div class="epicerie-logos">';
+        clients.forEach(name=>{
+          const ep = allEpiceries.find(x=>x.nom===name);
+          if (ep && ep['url icone']) {
+            logosHTML += `<img src="${ep['url icone']}" title="${ep.nom}">`;
+          }
+        });
+        logosHTML += '</div>';
+
+        // popup : on enchaîne tout et on met LES LOGOS SEULS en bas
+        const popup = `
+          <strong>${item.nom}</strong><br/>
+          ${item.adresse||''} ${item['code postal']||''} ${item.ville||''}<br/>
+          Activité: ${item.activite||''}<br/>
+          Type: ${item.type||''}<br/>
+          Label: ${item.label||''}<br/>
+          Tél: ${item.telephone||''}<br/>
+          Mail: <a href="mailto:${item.mail||''}">${item.mail||''}</a><br/>
+		  <br/>Epicerie partenaire<br/>
+		  ${logosHTML}<br/>
+		          `;
+
+        const m = L.marker(pt,{icon:div,title:item.nom})
+                    .bindPopup(popup);
+        m.feature={data:item,latlng:pt};
+        allGroups.push(m);
+        markerCluster.addLayer(m);
+      });
+      buildFilters(labelColorMap);
+    }
+
+
+
+  
+
+    function buildFilters(labelColorMap){
+      // Activités
+      const acts = [...new Set(allData.map(d=>d.activite).filter(Boolean))].sort();
+      const aC = document.getElementById('activiteCheckboxes'); aC.innerHTML='';
+      acts.forEach(v=>{
+        const lbl=document.createElement('label');
+        const cb=document.createElement('input');
+        cb.type='checkbox'; cb.value=v; cb.checked=true; cb.onchange=applyFilters;
+        lbl.append(cb,document.createTextNode(' '+v)); aC.append(lbl);
+      });
+      document.getElementById('toggleAllActivites').onclick = ()=>toggleGroup('activiteCheckboxes','toggleAllActivites');
+      // Type
+      const types=[...new Set(allData.map(d=>d.type).filter(Boolean))].sort();
+      const tC=document.getElementById('typeCheckboxes'); tC.innerHTML='';
+      types.forEach(v=>{
+        const lbl=document.createElement('label');
+        const cb=document.createElement('input');
+        cb.type='checkbox'; cb.value=v; cb.checked=true; cb.onchange=applyFilters;
+        lbl.append(cb,document.createTextNode(' '+v)); tC.append(lbl);
+      });
+      document.getElementById('toggleAllTypes').onclick = ()=>toggleGroup('typeCheckboxes','toggleAllTypes');
+      // Labels
+      const labels=[...new Set(allData.map(d=>d.label).filter(Boolean))].sort();
+      const lC=document.getElementById('labelCheckboxes'); lC.innerHTML='';
+      labels.forEach(v=>{
+        const lbl=document.createElement('label');
+        const sw=document.createElement('span');
+        sw.className='label-color-swatch'; sw.style.background=labelColorMap[v]||'#000';
+        const cb=document.createElement('input');
+        cb.type='checkbox'; cb.value=v; cb.checked=true; cb.onchange=applyFilters;
+        lbl.append(sw,cb,document.createTextNode(' '+v)); lC.append(lbl);
+      });
+      document.getElementById('toggleAllLabels').onclick = ()=>toggleGroup('labelCheckboxes','toggleAllLabels');
+      // Distance
+      const distanceInput = document.getElementById('distanceFilter');
+  const distanceValue = document.getElementById('distanceValue');
+  distanceInput.oninput = e => {
+    const km = +e.target.value;
+    distanceValue.textContent = km + ' km';
+    // <-- à la place de L.circle(...) on appelle :
+    drawDistanceCircle(km);
+    applyFilters();
+  };
+
+      // Recherche
+      document.getElementById('search').oninput = applyFilters;
+      // Accordéon
+      document.querySelectorAll('.accordion-toggle').forEach(b=>b.onclick=()=>b.parentElement.classList.toggle('active'));
+    }
+
+    function toggleGroup(containerId,btnId){
+      const cbs = document.querySelectorAll('#'+containerId+' input[type=checkbox]');
+      const allChecked = Array.from(cbs).every(cb=>cb.checked);
+      cbs.forEach(cb=>cb.checked = !allChecked);
+      document.getElementById(btnId).innerText = allChecked ? 'Tout cocher' : 'Tout décocher';
+      applyFilters();
+    }
+
+    function applyFilters(){
+      const sel = id=> Array.from(document.querySelectorAll('#'+id+' input:checked')).map(cb=>cb.value);
+      const selE=sel('epicerieCheckboxes'),
+            selA=sel('activiteCheckboxes'),
+            selT=sel('typeCheckboxes'),
+            selL=sel('labelCheckboxes');
+      const maxD=+document.getElementById('distanceFilter').value;
+      const q=document.getElementById('search').value.toLowerCase();
+      let cnt=0; markerCluster.clearLayers();
+      allGroups.forEach(m=>{
+        const d=m.feature.data;
+        const clients=(d.client||'').split(',').map(s=>s.trim());
+        const okE = selE.length===allEpiceries.length ? true : clients.some(c=>selE.includes(c));
+        const dist = centralPoint?map.distance(centralPoint,m.feature.latlng)/1000:0;
+        if(okE && selA.includes(d.activite) && selT.includes(d.type) && selL.includes(d.label) && dist<=maxD && d.nom.toLowerCase().includes(q)){
+          markerCluster.addLayer(m); cnt++;
+        }
+      });
+      document.getElementById('counter').textContent = cnt+' producteurs visibles';
+
+      // épiceries cochées
+      epicerieLayer.clearLayers();
+      allEpiceries.forEach(e=>{
+        if (!sel('epicerieCheckboxes').includes(e.nom)) return;
+        const lat=parseFloat(e.latitude), lng=parseFloat(e.longitude);
+        if(isNaN(lat)||isNaN(lng)) return;
+        const div = makeDivIcon(e['url icone'],'#FF8C00',60,50);
+        L.marker([lat,lng],{icon:div,title:e.nom})
+         .bindPopup(`<strong>${e.nom}</strong><br>
+           ${e.adresse||''} ${e['code postal']||''} ${e.ville||''}<br>
+           Tél: ${e.telephone||''}<br>
+           Mail: <a href="mailto:${e.mail||''}">${e.mail||''}</a><br>
+           Lun: ${e.lundi||''}<br/>
+		   Mar: ${e.mardi||''}<br/>
+		   Mer: ${e.mercredi||''}<br/>
+		   Jeu: ${e.jeudi||''}<br/>
+		   Ven: ${e.vendredi||''}<br/>
+		   Sam: ${e.samedi||''}<br/>
+		   Dim: ${e.dimanche||''}
+		   
+		   `)
+         .addTo(epicerieLayer);
+      });
+    }
+
+    window.onload = initMap;
+  </script>
+</body>
+</html>
