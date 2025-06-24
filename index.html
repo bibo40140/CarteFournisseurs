@@ -21,6 +21,8 @@
     .label-color-swatch{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:6px;border:1px solid #aaa}
     .epicerie-logos{margin-top:6px;display:flex;flex-wrap:wrap}
     .epicerie-logos img{width:48px;height:48px;margin:2px;vertical-align:middle;border-radius:4px;border:1px solid #ccc}
+	#helpLinkContainer{margin-top:auto; text-align:center; padding-top:10px; border-top:1px solid #ddd;}
+    #helpLinkContainer a{ text-decoration:none; color:#007bff; font-weight:bold; }
   </style>
 </head>
 <body>
@@ -66,7 +68,14 @@
         <button id="toggleAllLabels" class="small-btn">Tout décocher</button>
       </div>
     </div>
+	
+	
     <div id="counter" style="margin-top:10px;font-weight:bold">0 producteurs visibles</div>
+	
+	<!-- Lien aide -->
+  <div id="helpLinkContainer">
+      <a href="#" id="helpLink">ℹ️ Besoin d'aide ?</a>
+    </div>
   </div>
   <div id="map"></div>
 
@@ -380,12 +389,42 @@ allEpiceries.forEach(e => {
         })
         .catch(err => console.error('Impossible de charger CarteFournisseur.xlsx :', err));
     }
+	
+	function showWelcomePopup() {
+  L.popup({ maxWidth: 300, closeButton: true })
+    .setLatLng( map.getCenter() )
+    .setContent(`
+      <div style="font-size:14px; line-height:1.4;">
+        <strong>Bienvenue&nbsp;!</strong><br/>
+        <p>Cette carte affiche&nbsp;:</p>
+        <ul style="padding-left:1em; margin:0;">
+          <li>Les producteurs (marqueurs colorés)</li>
+          <li>Les épiceries partenaires (icônes oranges)</li>
+        </ul>
+        <p>Utilisez le panneau à gauche pour&nbsp;:</p>
+        <ul style="padding-left:1em; margin:0;">
+          <li>Filtrer par épicerie, activité, type, label</li>
+          <li>Définir une distance max</li>
+          <li>Rechercher un producteur par nom</li>
+        </ul>
+        Cliquez n’importe où pour fermer cette fenêtre.
+      </div>
+    `)
+    .openOn(map);
+}
 
     // 12) Démarrage
-    window.onload = () => {
-      initMap();
-      loadData();
-    };
+  window.onload = () => {
+  initMap();
+  showWelcomePopup();   // popup au démarrage
+  loadData();
+
+  // rattache le lien "Comment ça marche ?"
+  document.getElementById('helpLink').onclick = e => {
+    e.preventDefault();
+    showWelcomePopup();
+  };
+};
   </script>
 </body>
 </html>
