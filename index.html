@@ -25,7 +25,6 @@
 </head>
 <body>
   <div id="sidebar">
-    <!-- input supprimé pour chargement automatique -->
     <div class="accordion-section">
       <button class="accordion-toggle">🔍 Rechercher</button>
       <div class="accordion-content">
@@ -71,23 +70,31 @@
   </div>
   <div id="map"></div>
 
+  <!-- Librairies externes -->
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
   <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+
+  <!-- Script principal -->
   <script>
+    // 1) Variables globales
     let map, markerCluster, epicerieLayer, centralPoint, distanceCircle;
     let allData = [], allGroups = [], allEpiceries = [];
     const geocodeCache = {};
     const centralAddress = '6 rue des molinies, 40140 Azur';
 
+    // 2) Init carte
     function initMap() {
       map = L.map('map').setView([43.7, -1.3], 8);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'© OSM' }).addTo(map);
-      markerCluster = L.markerClusterGroup(); map.addLayer(markerCluster);
-      epicerieLayer = L.layerGroup().addTo(map);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OSM'
+      }).addTo(map);
+      markerCluster = L.markerClusterGroup().addTo(map);
+      epicerieLayer   = L.layerGroup().addTo(map);
       geocode(centralAddress).then(pt => centralPoint = pt);
     }
 
+    // 3) Géocodage
     function geocode(addr) {
       if (geocodeCache[addr]) return Promise.resolve(geocodeCache[addr]);
       return fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}`)
@@ -99,6 +106,7 @@
         }).catch(() => null);
     }
 
+    // 4) Cercle de distance
     function drawDistanceCircle(km) {
       if (distanceCircle) map.removeLayer(distanceCircle);
       if (!centralPoint) return;
@@ -109,9 +117,12 @@
       }).addTo(map);
     }
 
+    // 5) Icône personnalisée
     function makeDivIcon(iconUrl, borderColor, size = 40, imgSize = 28) {
       return L.divIcon({
-        className: '', iconSize: [size, size], iconAnchor: [size/2, size/2],
+        className: '',
+        iconSize: [size, size],
+        iconAnchor: [size/2, size/2],
         html: `
           <div style="position:relative;width:${size}px;height:${size}px;">
             <div style="
@@ -128,48 +139,215 @@
       });
     }
 
-    // Chargement automatique du fichier XLSX
+    // 6) Menu épiceries
+    function buildEpicerieMenu() {
+      const c = document.getElementById('epicerieCheckboxes');
+      c.innerHTML = '';
+      allEpiceries.forEach(e => {
+        const lbl = document.createElement('label');
+        const img = document.createElement('img');
+        img.src = e['url icone']; img.style.width='20px'; img.style.height='20px'; img.style.marginRight='6px';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.value = e.nom; cb.checked = true; cb.onchange = applyFilters;
+        lbl.append(img, cb, document.createTextNode(' ' + e.nom));
+        c.append(lbl);
+      });
+      document.getElementById('toggleAllEpiceries')
+        .onclick = () => toggleGroup('epicerieCheckboxes','toggleAllEpiceries');
+    }
+
+    // 7) Traitement producteurs
+    function processData(iconMap, labelColorMap) {
+      markerCluster.clearLayers();
+      allGroups = [];
+      allData.forEach(item => {
+        if (!item.latitude || !item.longitude) return;
+        const pt  = L.latLng(item.latitude, item.longitude);
+        const div = makeDivIcon(iconMap[item.activite] || '', labelColorMap[item.label] || '#000');
+        // logos partenaires
+        const clients = (item.client || '').split(',').map(s=>s.trim());
+        let logosHTML = '<div class="epicerie-logos">';
+        clients.forEach(name => {
+          const ep = allEpiceries.find(x => x.nom === name);
+          if (ep && ep['url icone']) {
+            logosHTML += `<img src="${ep['url icone']}" title="${ep.nom}">`;
+          }
+        });
+        logosHTML += '</div>';
+        const popup = `
+          <strong>${item.nom}</strong><br/>
+          ${item.adresse||''} ${item['code postal']||''} ${item.ville||''}<br/>
+          Activité: ${item.activite||''}<br/>
+          Type: ${item.type||''}<br/>
+          Label: ${item.label||''}<br/>
+          Tél: ${item.telephone||''}<br/>
+          Mail: <a href="mailto:${item.mail||''}">${item.mail||''}</a><br/>
+          <br/>Épiceries partenaires:<br/>${logosHTML}
+        `;
+        const m = L.marker(pt, {icon: div, title: item.nom}).bindPopup(popup);
+        m.feature = {data: item, latlng: pt};
+        allGroups.push(m);
+        markerCluster.addLayer(m);
+      });
+      buildFilters(labelColorMap);
+    }
+
+    // 8) Filtres UI
+    function buildFilters(labelColorMap) {
+      // Activités
+      const acts = Array.from(new Set(allData.map(d=>d.activite).filter(Boolean))).sort();
+      const aC   = document.getElementById('activiteCheckboxes'); aC.innerHTML = '';
+      acts.forEach(v => {
+        const lbl = document.createElement('label');
+        const cb  = document.createElement('input');
+        cb.type='checkbox'; cb.value=v; cb.checked=true; cb.onchange=applyFilters;
+        lbl.append(cb, document.createTextNode(' '+v)); aC.append(lbl);
+      });
+      document.getElementById('toggleAllActivites')
+        .onclick = () => toggleGroup('activiteCheckboxes','toggleAllActivites');
+
+      // Type
+      const types = Array.from(new Set(allData.map(d=>d.type).filter(Boolean))).sort();
+      const tC    = document.getElementById('typeCheckboxes'); tC.innerHTML = '';
+      types.forEach(v => {
+        const lbl = document.createElement('label');
+        const cb  = document.createElement('input');
+        cb.type='checkbox'; cb.value=v; cb.checked=true; cb.onchange=applyFilters;
+        lbl.append(cb, document.createTextNode(' '+v)); tC.append(lbl);
+      });
+      document.getElementById('toggleAllTypes')
+        .onclick = () => toggleGroup('typeCheckboxes','toggleAllTypes');
+
+      // Labels
+      const labels = Array.from(new Set(allData.map(d=>d.label).filter(Boolean))).sort();
+      const lC     = document.getElementById('labelCheckboxes'); lC.innerHTML = '';
+      labels.forEach(v => {
+        const lbl = document.createElement('label');
+        const sw  = document.createElement('span');
+        sw.className='label-color-swatch'; sw.style.background=labelColorMap[v]||'#000';
+        const cb  = document.createElement('input');
+        cb.type='checkbox'; cb.value=v; cb.checked=true; cb.onchange=applyFilters;
+        lbl.append(sw, cb, document.createTextNode(' '+v)); lC.append(lbl);
+      });
+      document.getElementById('toggleAllLabels')
+        .onclick = () => toggleGroup('labelCheckboxes','toggleAllLabels');
+
+      // Distance
+      const distanceInput = document.getElementById('distanceFilter');
+      const distanceValue = document.getElementById('distanceValue');
+      distanceInput.oninput = e => {
+        const km = +e.target.value;
+        distanceValue.textContent = km+' km';
+        drawDistanceCircle(km);
+        applyFilters();
+      };
+
+      // Recherche & accordéon
+      document.getElementById('search').oninput = applyFilters;
+      document.querySelectorAll('.accordion-toggle')
+        .forEach(b => b.onclick = () => b.parentElement.classList.toggle('active'));
+    }
+
+    // 9) Toggle tous/aucun
+    function toggleGroup(containerId, btnId) {
+      const cbs = document.querySelectorAll('#'+containerId+' input[type=checkbox]');
+      const allChecked = Array.from(cbs).every(cb => cb.checked);
+      cbs.forEach(cb => cb.checked = !allChecked);
+      document.getElementById(btnId).innerText = allChecked ? 'Tout cocher' : 'Tout décocher';
+      applyFilters();
+    }
+
+    // 10) Appliquer filtres
+    function applyFilters() {
+      const sel = id => Array.from(document.querySelectorAll('#'+id+' input:checked')).map(cb => cb.value);
+      const selE = sel('epicerieCheckboxes'),
+            selA = sel('activiteCheckboxes'),
+            selT = sel('typeCheckboxes'),
+            selL = sel('labelCheckboxes');
+      const maxD = +document.getElementById('distanceFilter').value;
+      const q    = document.getElementById('search').value.toLowerCase();
+      let cnt = 0;
+      markerCluster.clearLayers();
+      allGroups.forEach(m => {
+        const d = m.feature.data;
+        const clients = (d.client||'').split(',').map(s=>s.trim());
+        const okE = selE.length===allEpiceries.length
+                  ? true
+                  : clients.some(c=>selE.includes(c));
+        const dist = centralPoint ? map.distance(centralPoint,m.feature.latlng)/1000 : 0;
+        if (okE && selA.includes(d.activite)
+                 && selT.includes(d.type)
+                 && selL.includes(d.label)
+                 && dist <= maxD
+                 && d.nom.toLowerCase().includes(q)) {
+          markerCluster.addLayer(m);
+          cnt++;
+        }
+      });
+      document.getElementById('counter').textContent = cnt+' producteurs visibles';
+
+      // Réafficher épiceries décochées si besoin
+      epicerieLayer.clearLayers();
+      allEpiceries.forEach(e => {
+        if (!sel('epicerieCheckboxes').includes(e.nom)) return;
+        const lat = parseFloat(e.latitude), lng = parseFloat(e.longitude);
+        if (isNaN(lat)||isNaN(lng)) return;
+        const div = makeDivIcon(e['url icone'],'#FF8C00',60,50);
+        L.marker([lat,lng],{icon:div}).addTo(epicerieLayer);
+      });
+    }
+
+    // 11) Chargement automatique du XLSX
     function loadData() {
       fetch('CarteFournisseur.xlsx')
-        .then(resp => resp.arrayBuffer())
+        .then(resp => {
+          if (!resp.ok) throw new Error('HTTP '+resp.status);
+          return resp.arrayBuffer();
+        })
         .then(buf => {
-          const wb = XLSX.read(buf, { type: 'array' });
+          const wb = XLSX.read(buf, { type:'array' });
 
-          // 1) Épiceries
+          // --- 1) Producteurs, exactement comme en manuel ---
+          const ws0 = wb.Sheets[wb.SheetNames[0]];
+          allData = XLSX.utils.sheet_to_json(ws0, { defval: '' })
+            .map(r => Object.fromEntries(
+              Object.entries(r).map(([k,v]) => [
+                k.toLowerCase().trim()
+                 .normalize('NFD').replace(/[\u0300-\u036f]/g,''),
+                v
+              ])
+            ));
+
+          // --- 2) Épiceries ---
           const wsE = wb.Sheets['Epicerie'];
           if (wsE) {
             allEpiceries = XLSX.utils.sheet_to_json(wsE, { defval: '' })
               .map(r => Object.fromEntries(
-                Object.entries(r).map(([k, v]) =>
-                  [k.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, ''), v]
-                )
+                Object.entries(r).map(([k,v]) => [
+                  k.toLowerCase().trim()
+                   .normalize('NFD').replace(/[\u0300-\u036f]/g,''),
+                  v
+                ])
               ));
           }
 
-          // 2) Producteurs
-          const ws0 = wb.Sheets[wb.SheetNames[0]];
-          allData = XLSX.utils.sheet_to_json(ws0, { defval: '' })
-            .map(r => Object.fromEntries(
-              Object.entries(r).map(([k, v]) =>
-                [k.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, ''), v]
-              )
-            ));
-
-          // 3) Icônes & Couleurs
+          // --- 3) Data / Icones ---
           const ds = wb.Sheets['Data'] || wb.Sheets['data'] || wb.Sheets['Icones'];
           const iconMap = {}, labelColorMap = {};
           if (ds) XLSX.utils.sheet_to_json(ds, { defval: '' })
             .forEach(raw => {
               const row = Object.fromEntries(
-                Object.entries(raw).map(([k, v]) =>
-                  [k.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, ''), v]
-                )
+                Object.entries(raw).map(([k,v]) => [
+                  k.toLowerCase().trim()
+                   .normalize('NFD').replace(/[\u0300-\u036f]/g,''),
+                  v
+                ])
               );
               if (row.activite && row['url icone']) iconMap[row.activite] = row['url icone'];
-              if (row.label    && row.labelcolor ) labelColorMap[row.label] = row.labelcolor;
+              if (row.label    && row.labelcolor ) labelColorMap[row.label]   = row.labelcolor;
             });
 
-          // 4) Construction menu et affichage
+          // --- 4) Affichage ---
           buildEpicerieMenu();
           processData(iconMap, labelColorMap);
           applyFilters();
@@ -177,7 +355,7 @@
         .catch(err => console.error('Impossible de charger CarteFournisseur.xlsx :', err));
     }
 
-    // Démarrage : initialiser + charger les données
+    // 12) Démarrage
     window.onload = () => {
       initMap();
       loadData();
